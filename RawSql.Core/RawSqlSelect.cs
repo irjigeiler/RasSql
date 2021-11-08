@@ -4,8 +4,8 @@ namespace RawSql.Core
 {
     public class RawSqlSelect : IRawSqlItem
     {
-        public IList<IRawSqlItem> Columns { get; set; }
         public IRawSqlItem From { get; set; }
+        public IList<IRawSqlItem> Columns { get; set; }
         public IList<RawSqlJoin> Joins { get; set; }
         public IList<IRawSqlItem> GroupBy { get; set; }
         public IList<RawSqlOrderBy> OrderBy { get; set; }

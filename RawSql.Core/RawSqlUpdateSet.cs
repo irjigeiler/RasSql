@@ -1,8 +1,8 @@
 namespace RawSql.Core
 {
-    public sealed class RawSqlSet<TEntity> : IRawSqlItem
+    public sealed class RawSqlUpdateSet<TEntity> : IRawSqlItem
     {
-        public RawSqlSet(RawSqlColumn<TEntity> column, IRawSqlItem value)
+        public RawSqlUpdateSet(RawSqlColumn<TEntity> column, IRawSqlItem value)
         {
             Column = column;
             Value = value;

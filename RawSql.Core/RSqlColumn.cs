@@ -31,10 +31,4 @@ namespace RawSql.Core
 
         public override string ToString() => $"{nameof(TEntity)}.{Property.GetPropertyName()}";
     }
-
-    public interface IRawSqlColumn : IRawSqlItem
-    {
-        IRawSqlTable Table { get; }
-        MemberInfo PropertyInfo { get; }
-    }
 }

@@ -7,7 +7,7 @@ namespace RawSql.Core
     {
         public static RawSqlTable<TEntity> Table<TEntity>() => new RawSqlTable<TEntity>();
         
-        public static RawSqlUpdate<TEntity> Update<TEntity>(RawSqlTable<TEntity> table, IEnumerable<RawSqlSet<TEntity>> setters, IRawSqlItem where = null)
+        public static RawSqlUpdate<TEntity> Update<TEntity>(RawSqlTable<TEntity> table, IEnumerable<RawSqlUpdateSet<TEntity>> setters, IRawSqlItem where = null)
         {
             return new RawSqlUpdate<TEntity>(table)
             {
@@ -16,9 +16,9 @@ namespace RawSql.Core
             };
         }
 
-        public static RawSqlSet<TEntity> Set<TEntity, TProperty>(RawSqlColumn<TEntity, TProperty> column, TProperty value)
+        public static RawSqlUpdateSet<TEntity> Set<TEntity, TProperty>(RawSqlColumn<TEntity, TProperty> column, TProperty value)
         {
-            return new RawSqlSet<TEntity>(column, new RawSqlConstant(value));
+            return new RawSqlUpdateSet<TEntity>(column, new RawSqlConstant(value));
         }
         
         

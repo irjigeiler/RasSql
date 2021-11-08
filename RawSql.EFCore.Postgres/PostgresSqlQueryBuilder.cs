@@ -68,7 +68,7 @@ namespace EFCore.RawSql.Postgres
             item.Visit(this);
         }
 
-        void IRawSqlVisitor.Visit<TEntity>(RawSqlSet<TEntity> set)
+        void IRawSqlVisitor.Visit<TEntity>(RawSqlUpdateSet<TEntity> set)
         {
             var name = Context.ColumnName(set.Column);
             Builder.Append("SET ").AppendQuoted(name).Append(" = ");
@@ -136,18 +136,34 @@ namespace EFCore.RawSql.Postgres
             
             Visit(select.From);
             
-            Builder
-                .DecreaseIndent()
-                .AppendMultiple(select.Joins,
-                    (builder, join) => Visit(join),
-                    builder => builder.AppendLine())
-                .AppendLine();
+            Builder.DecreaseIndent();
+            Builder.AppendLine();
+            if (select.Joins?.Count > 0)
+            {
+                Builder
+                    .AppendMultiple(select.Joins,
+                        (builder, join) => Visit(join),
+                        builder => builder.AppendLine())
+                    .AppendLine();
+            }
 
             if (select.Where != null)
             {
                 Builder.Append("WHERE ");
                 Visit(select.Where);
                 Builder.AppendLine();
+            }
+
+            if (select.GroupBy?.Count > 0)
+            {
+                Builder
+                    .Append("GROUP BY")
+                    .AppendMultiple(
+                        select.GroupBy,
+                        (builder, groupBy) => Visit(groupBy),
+                        builder => builder.Comma().Space()
+                    )
+                    .AppendLine();
             }
 
             if (select.Having != null)

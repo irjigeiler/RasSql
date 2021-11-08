@@ -12,13 +12,13 @@ namespace RawSql.Core
         }
 
         public RawSqlTable<TEntity> Table { get; }
-        public IList<RawSqlSet<TEntity>> Setters { get; internal set; } = new List<RawSqlSet<TEntity>>();
+        public IList<RawSqlUpdateSet<TEntity>> Setters { get; internal set; } = new List<RawSqlUpdateSet<TEntity>>();
         public IRawSqlItem Where { get; set; } 
         
         public RawSqlUpdate<TEntity> AddSet<TProperty>(Expression<Func<TEntity, TProperty>> selector, IRawSqlItem value)
         {
             var column = Table.Column(selector);
-            var setter = new RawSqlSet<TEntity>(column, value);
+            var setter = new RawSqlUpdateSet<TEntity>(column, value);
             Setters.Add(setter);
             return this;
         }
