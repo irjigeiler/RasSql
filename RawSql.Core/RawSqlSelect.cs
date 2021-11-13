@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace RawSql.Core
 {
-    public class RawSqlSelect : IRawSqlItem
+    public class RawSqlSelect : IRawSqlItem, IRawSqlAliasScope
     {
         public IRawSqlItem From { get; set; }
         public IList<IRawSqlItem> Columns { get; set; }

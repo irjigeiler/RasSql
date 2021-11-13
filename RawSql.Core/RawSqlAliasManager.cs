@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace RawSql.Core
 {
@@ -14,94 +15,79 @@ namespace RawSql.Core
         private IDictionary<AliasKey, int> AliasIndexes { get; } = new Dictionary<AliasKey, int>();
         private IDictionary<IRawSqlItem, string> Items { get; } = new Dictionary<IRawSqlItem, string>();
         
-        private string TableAlias(IRawSqlTable table)
+        public string Alias(IRawSqlItem item, IRawSqlAliasScope scope = null)
         {
-            if (!Items.TryGetValue(table, out var alias))
+            return item switch
             {
-                alias = GenerateTableName(table);
-                Items[table] = alias;
+                IRawSqlTable table => GetAlias(table, scope, GenerateTableName),
+                IRawSqlColumn column => GetAlias(column, scope, GenerateColumnName),
+                RawSqlSelect select => GetAlias(select, scope, _ => "source"),
+                _ => GetAlias(item, scope, _ => "other")
+            };
+        }
+
+        private string GetAlias<TItem>(TItem item, IRawSqlAliasScope scope, Func<TItem, string> generateName) where TItem:IRawSqlItem
+        {
+            if (!Items.TryGetValue(item, out var alias))
+            {
+                var name = generateName(item);
+                var key = AliasKey.CreateSource(name, scope);
+                alias = GetAliasName(key, name);
+                Items[item] = alias;
             }
 
             return alias;
         }
-        
-        private string ColumnAlias(IRawSqlColumn column)
-        {
-            if (!Items.TryGetValue(column, out var alias))
-            {
-                alias = GenerateColumnName(column);
-                Items[column] = alias;
-            }
 
-            return alias;
-        }
+        private string GenerateTableName(IRawSqlTable table) => MetadataProvider.TableName(table.EntityType);
 
-        public string Alias(IRawSqlItem item)
-        {
-            if (Items.TryGetValue(item, out var alias))
-            {
-                return alias;
-            }
-            
-            switch (item)
-            {
-                case IRawSqlTable table:
-                    return TableAlias(table);
-                case IRawSqlColumn column:
-                    return ColumnAlias(column);
-                default:
-                    var key = new AliasKey("select", item.GetType());
-                    var aliasName = GetAliasName(key, "source");
-                    Items[item] = aliasName;
-                    return aliasName;
-            }
-        }
+        private string GenerateColumnName(IRawSqlColumn column) => MetadataProvider.ColumnName(column.Table.EntityType, column.PropertyInfo);
 
-        private string GenerateTableName(IRawSqlTable table)
-        {
-            var key = new AliasKey(table.EntityType.Name, table.GetType());
-            var name = MetadataProvider.TableName(table.EntityType);
-            return GetAliasName(key, name);
-        }
-
-        private string GenerateColumnName(IRawSqlColumn column)
-        {
-            var keyName = $"{column.Table.EntityType.Name}.{column.PropertyInfo.Name}";
-            var key = new AliasKey(keyName, column.PropertyInfo.DeclaringType);
-            var name = MetadataProvider.ColumnName(column.Table.EntityType, column.PropertyInfo);
-            return GetAliasName(key, name);
-        }
-        
         private string GetAliasName(AliasKey key, string name)
         {
             AliasIndexes.TryGetValue(key, out var idx);
-
-            var result = idx == 0 ? name : $"{name}_{idx + 1}";
+            var normalized = new string(name.Where((c, i) => i == 0 || Char.IsUpper(c)).Select(Char.ToLowerInvariant).ToArray());
+            var result = idx == 0 ? normalized : $"{normalized}_{idx + 1}";
             AliasIndexes[key] = idx + 1;
             return result;
         }
-
+        
         private sealed class AliasKey :IEquatable<AliasKey>
         {
-            public AliasKey(string name, Type type)
+            public AliasKey(string name, AliasType type, IRawSqlAliasScope scope)
             {
                 Name = name;
                 Type = type;
+                Scope = scope;
             }
 
             public string Name { get;  }
-            public Type Type { get; }
+            public AliasType Type { get; }
+            public IRawSqlAliasScope Scope { get; }
 
             public bool Equals(AliasKey other)
             {
                 if (ReferenceEquals(null, other)) return false;
                 if (ReferenceEquals(this, other)) return true;
-                return Name == other.Name && Type == other.Type;
+                
+                return Name == other.Name
+                       && Type == other.Type 
+                       && (ReferenceEquals(Scope, other.Scope) || Scope is null && other.Scope is null);
             }
 
             public override bool Equals(object obj) => ReferenceEquals(this, obj) || obj is AliasKey other && Equals(other);
 
-            public override int GetHashCode() => HashCode.Combine(Name, Type);
+            public override int GetHashCode() => HashCode.Combine(Name, Type, Scope?.GetHashCode() ?? 0);
+
+            public static AliasKey CreateSource(string name, IRawSqlAliasScope scope = null) => new AliasKey(name, AliasType.Source, scope);
+            
+            public static AliasKey CreateExpression(string name, IRawSqlAliasScope scope) => new AliasKey(name, AliasType.Expression, scope);
+        }
+
+        private enum AliasType
+        {
+            Source,
+            Expression
         }
     }
 }

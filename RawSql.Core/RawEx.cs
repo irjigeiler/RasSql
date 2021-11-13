@@ -3,7 +3,7 @@ using System.Linq;
 
 namespace RawSql.Core
 {
-    public static class RawSqlExpressions
+    public static class RawEx
     {
         public static RawSqlTable<TEntity> Table<TEntity>() => new RawSqlTable<TEntity>();
         
@@ -46,5 +46,11 @@ namespace RawSql.Core
             var first = Or(left,right);
             return others.Aggregate(first, Or);
         }
+        
+        public static RawSqlBinaryOperator Multiply(IRawSqlItem left, IRawSqlItem right) => new RawSqlBinaryOperator(RawSqlBinaryOperatorValue.Multiply, left, right);
+        public static RawSqlBinaryOperator Subtract(IRawSqlItem left, IRawSqlItem right) => new RawSqlBinaryOperator(RawSqlBinaryOperatorValue.Subtract, left, right);
+        public static RawSqlBinaryOperator Divide(IRawSqlItem left, IRawSqlItem right) => new RawSqlBinaryOperator(RawSqlBinaryOperatorValue.Divide, left, right);
+        public static RawSqlBinaryOperator Add(IRawSqlItem left, IRawSqlItem right) => new RawSqlBinaryOperator(RawSqlBinaryOperatorValue.Add, left, right);
+
     }
 }

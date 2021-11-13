@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -9,38 +11,78 @@ namespace EFCore.RawSql.Postgres
 {
     public class PostgresSqlQueryBuilder : IRawSqlVisitor
     {
-        private PostgresSqlQueryBuilder(BuilderContext context)
+        private PostgresSqlQueryBuilder(EFRawSqlMetadataProvider metadataProvider, RawSelectHierarchies selectHierarchies)
         {
-            Context = context;
-            AliasManager = new RawSqlAliasManager(context);
+            MetadataProvider = metadataProvider;
+            AliasManager = new RawSqlAliasManager(metadataProvider);
             Builder = new RawSqlStringBuilder();
+            Hierarchies = selectHierarchies;
+            Context = new BuilderContext
+            {
+            };
         }
 
         public static string Build(IRawSqlItem item, DbContext context)
         {
-            var builderContext = new BuilderContext(context.Model);
-            var builder = new PostgresSqlQueryBuilder(builderContext);
-            item.Visit(builder);
-            return builder.Builder.ToString();
+            var hierarchies = RawSelectHierarchiesBuilder.Build(item);
+            var metadataProvider = EFRawSqlMetadataProvider.Create(context);
+            var queryBuilder = new PostgresSqlQueryBuilder(metadataProvider, hierarchies);
+            item.Visit(queryBuilder);
+            return queryBuilder.Builder.ToString();
         }
 
-        private BuilderContext Context { get; }
+        private EFRawSqlMetadataProvider MetadataProvider { get; }
         private RawSqlStringBuilder Builder { get; }
         private RawSqlAliasManager AliasManager { get; }
+        private RawSelectHierarchies Hierarchies { get; }
+        private BuilderContext Context { get; }
         
-        void IRawSqlVisitor.Visit<TEntity>(RawSqlTable<TEntity> table)
+        public void Visit<TEntity>(RawSqlTable<TEntity> table)
         {
-            var name = Context.TableName<TEntity>();
+            var name = MetadataProvider.TableName<TEntity>();
+            Builder.AppendQuoted(name);
+            // if (Context.UseTableAliases)
+            // {
+            //     var alias = AliasManager.Alias(table);
+            //     Builder.Space().Append(alias);
+            // }
+        }
+
+        public void Visit<TEntity>(RawSqlColumn<TEntity> column)
+        {
+            var parent = Hierarchies.GetParent(column, Context.CurrentAliasScope);
+            if (parent != null)
+            {
+                var sourceAlias = AliasManager.Alias(parent);
+                var columnAlias = AliasManager.Alias(column, parent);
+                Builder.Append(sourceAlias).Dot().Append(columnAlias);
+                return;
+            }
+            
+            if (Context.UseTableAliases)
+            {
+                var alias = AliasManager.Alias(column.Table);
+                Builder.Append(alias).Dot();
+            }
+            
+            var name = MetadataProvider.ColumnName(column);
             Builder.AppendQuoted(name);
         }
 
-        void IRawSqlVisitor.Visit<TEntity>(RawSqlColumn<TEntity> column)
+        private bool TryVisitAsReference(IRawSqlItem item)
         {
-            var name = Context.ColumnName(column);
-            Builder.AppendQuoted(name);
+            var parent = Hierarchies.GetParent(item, Context.CurrentAliasScope);
+            if (parent != null)
+            {
+                var sourceAlias = AliasManager.Alias(parent);
+                var columnAlias = AliasManager.Alias(item, parent);
+                Builder.Append(sourceAlias).Dot().Append(columnAlias);
+            }
+
+            return parent != null;
         }
 
-        void IRawSqlVisitor.Visit<TEntity>(RawSqlUpdate<TEntity> update)
+        public void Visit<TEntity>(RawSqlUpdate<TEntity> update)
         {
             Builder.Append("UPDATE ");
             Visit(update.Table);
@@ -55,35 +97,30 @@ namespace EFCore.RawSql.Postgres
                 .AppendLine()
                 .DecreaseIndent()
                 .Append("WHERE ");
-            Visit(update.Where);
+            update.Where.Visit(this);
         }
 
-        private void Visit(IRawSqlItem item)
+        public void Visit<TEntity>(RawSqlUpdateSet<TEntity> set)
         {
-            item.Visit(this);
-        }
-        
-        private void VisitAsAlias(IRawSqlItem item)
-        {
-            item.Visit(this);
-        }
-
-        void IRawSqlVisitor.Visit<TEntity>(RawSqlUpdateSet<TEntity> set)
-        {
-            var name = Context.ColumnName(set.Column);
+            var name = MetadataProvider.ColumnName(set.Column);
             Builder.Append("SET ").AppendQuoted(name).Append(" = ");
-            Visit(set.Value);
+            set.Value.Visit(this);
         }
 
-        void IRawSqlVisitor.Visit(RawSqlConstant constant)
+        public void Visit(RawSqlConstant constant)
         {
             var value = GetConstantValue(constant);
             Builder.Append(value);
         }
 
-        void IRawSqlVisitor.Visit(RawSqlBinaryOperator @operator)
+        public void Visit(RawSqlBinaryOperator @operator)
         {
-            Visit(@operator.Left);
+            if (TryVisitAsReference(@operator))
+            {
+                return;
+            }
+            
+            @operator.Left.Visit(this);
 
             Builder.Space();
             switch (@operator.Operator)
@@ -106,27 +143,38 @@ namespace EFCore.RawSql.Postgres
                 case RawSqlBinaryOperatorValue.GreaterOrEqualThen:
                     Builder.Append(">=");
                     break;
+                
+                case RawSqlBinaryOperatorValue.Multiply:
+                    Builder.Append("*");
+                    break;
+                case RawSqlBinaryOperatorValue.Divide:
+                    Builder.Append("/");
+                    break;
+                case RawSqlBinaryOperatorValue.Add:
+                    Builder.Append("+");
+                    break;
+                case RawSqlBinaryOperatorValue.Subtract:
+                    Builder.Append("-");
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(@operator.Operator));
             }
 
             Builder.Space();
-            Visit(@operator.Right);
+            @operator.Right.Visit(this);
         }
 
-        void IRawSqlVisitor.Visit(RawSqlSelect @select)
+        public void Visit(RawSqlSelect select)
         {
+            Builder.AppendIf(Context.CurrentAliasScope != null, "(");
+            
+            Context.BeginAliasScope(select);
             Builder
                 .Append("SELECT ")
                 .IncreaseIndent()
                 .AppendMultiple(
                     select.Columns,
-                    (builder, expression) =>
-                    {
-                        Visit(expression);
-                        var alias = AliasManager.Alias(expression);
-                        builder.Append(" AS ").AppendQuoted(alias);
-                    },
+                    BuildSelectItem,
                     builder => builder.Comma().AppendLine()
                 )
                 .AppendLine()
@@ -134,7 +182,12 @@ namespace EFCore.RawSql.Postgres
                 .Append("FROM ")
                 .IncreaseIndent();
             
-            Visit(select.From);
+            select.From.Visit(this);
+            if (Context.UseTableAliases)
+            {
+                var fromAlias = AliasManager.Alias(select.From);
+                Builder.Space().Append(fromAlias);
+            }
             
             Builder.DecreaseIndent();
             Builder.AppendLine();
@@ -150,17 +203,17 @@ namespace EFCore.RawSql.Postgres
             if (select.Where != null)
             {
                 Builder.Append("WHERE ");
-                Visit(select.Where);
+                select.Where.Visit(this);
                 Builder.AppendLine();
             }
 
             if (select.GroupBy?.Count > 0)
             {
                 Builder
-                    .Append("GROUP BY")
+                    .Append("GROUP BY ")
                     .AppendMultiple(
                         select.GroupBy,
-                        (builder, groupBy) => Visit(groupBy),
+                        (builder, groupBy) => groupBy.Visit(this),
                         builder => builder.Comma().Space()
                     )
                     .AppendLine();
@@ -169,14 +222,14 @@ namespace EFCore.RawSql.Postgres
             if (select.Having != null)
             {
                 Builder.Append("HAVING ");
-                Visit(select.Having);
+                select.Having.Visit(this);
                 Builder.AppendLine();
             }
 
             if (select.OrderBy?.Count > 0)
             {
                 Builder
-                    .Append("ORDER BY")
+                    .Append("ORDER BY ")
                     .AppendMultiple(
                         select.OrderBy,
                         (builder, orderBy) => Visit(orderBy),
@@ -184,22 +237,25 @@ namespace EFCore.RawSql.Postgres
                     )
                     .AppendLine();
             }
+
+            Context.EndAliasScope();
+            Builder.AppendIf(Context.CurrentAliasScope != null, ")");
         }
         
-        void IRawSqlVisitor.Visit(RawSqlJoin @join)
+        public void Visit(RawSqlJoin join)
         {
             var joinType = GetJoinType(join);
             Builder.Append($"{joinType} JOIN ");
-            Visit(join.Source);
+            join.Source.Visit(this);
 
             var alias = AliasManager.Alias(join.Source);
-            Builder.Append(" AS ").AppendQuoted(alias).Append(" ON ");
-            Visit(join.On);
+            Builder.Space().AppendQuoted(alias).Append(" ON ");
+            join.On.Visit(this);
         }
 
-        void IRawSqlVisitor.Visit(RawSqlOrderBy orderBy)
+        public void Visit(RawSqlOrderBy orderBy)
         {
-            Visit(orderBy.Expression);
+            orderBy.Expression.Visit(this);
             Builder.Space();
             var direction = orderBy.Direction == RawSqlOrderByDirection.Asc ? "ASC" : "DESC";
             Builder.Append(direction);
@@ -217,42 +273,61 @@ namespace EFCore.RawSql.Postgres
                 _ => throw new ArgumentOutOfRangeException(nameof(constant), constant.Value, "Unknown constant type")
             };
         }
-
-        private sealed class BuilderContext : IRawSqlMetadataProvider
+        
+        private void BuildSelectItem<TItem>(RawSqlStringBuilder builder, TItem item) where TItem : IRawSqlItem
         {
-            public BuilderContext(IModel model)
-            {
-                Model = model;
-            }
-
-            private IModel Model { get; }
-
-            public string TableName(Type entity) => Model.FindEntityType(entity).GetTableName();
+            item.Visit(this);
             
-            public string ColumnName(Type entityType, MemberInfo property)
+            if (Hierarchies.IsRoot(item) || !Hierarchies.HasExternalReferences(item))
             {
-                var type = Model.FindEntityType(entityType);
-                var schema = type.GetSchema();
-                var tableName = type.GetTableName();
-                var storeIdentity = StoreObjectIdentifier.Table(tableName, schema);
-                var result = type.FindProperty(property);
-                return result.GetColumnName(storeIdentity);
+                return;
+            }
+            
+            var alias = AliasManager.Alias(item, Context.CurrentAliasScope);
+            var parent = Hierarchies.GetParent(item, Context.CurrentAliasScope);
+            if (parent == null || AliasManager.Alias(item, parent) != alias)
+            {
+                builder.Append(" AS ").Append(alias);
             }
         }
         
         private static string GetJoinType(RawSqlJoin join)
         {
-            switch (join.JoinType)
+            return join.JoinType switch
             {
-                case RawSqlJoinType.Inner:
-                    return "INNER";
-                case RawSqlJoinType.Left:
-                    return "LEFT";
-                case RawSqlJoinType.Right:
-                    return "RIGHT";
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(join.JoinType), join.JoinType, "Unsupported join type.");
-            }
+                RawSqlJoinType.Inner => "INNER",
+                RawSqlJoinType.Left => "LEFT",
+                RawSqlJoinType.Right => "RIGHT",
+                _ => throw new ArgumentOutOfRangeException(nameof(join.JoinType), join.JoinType, "Unsupported join type.")
+            };
         }
+
+        #region Context
+        
+        private sealed class BuilderContext
+        {
+            public BuilderContext()
+            {
+            }
+            
+            private Stack<IRawSqlAliasScope> AliasScopes { get; } = new Stack<IRawSqlAliasScope>();
+            public bool UseTableAliases =>
+                CurrentAliasScope is RawSqlSelect select 
+                && (select.Joins?.Any() == true || !(select.From is IRawSqlTable));
+
+            public void BeginAliasScope(IRawSqlAliasScope select)
+            {
+                AliasScopes.Push(select);
+            }
+
+            public void EndAliasScope()
+            {
+                AliasScopes.Pop();
+            }
+
+            public IRawSqlAliasScope CurrentAliasScope => AliasScopes.TryPeek(out var item) ? item : null;
+        }
+
+        #endregion
     }
 }

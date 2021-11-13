@@ -36,9 +36,12 @@ namespace RawSql.Core
             Context.Append(value);
             return this;
         }
+        
+        public RawSqlStringBuilder AppendIf(bool test, string value) => !test ? this : Append(value);
 
         public RawSqlStringBuilder Space() => Append(' ');
         public RawSqlStringBuilder Comma() => Append(',');
+        public RawSqlStringBuilder Dot() => Append('.');
         
         public RawSqlStringBuilder AppendQuoted(string value) => Append($"\"{value}\"");
 

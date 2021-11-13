@@ -19,7 +19,7 @@ namespace RawSql.Core
 
         IRawSqlTable IRawSqlColumn.Table => Table;
     }
-
+    
     public class RawSqlColumn<TEntity, TProperty> : RawSqlColumn<TEntity>
     {
         public RawSqlColumn(RawSqlTable<TEntity> table, Expression<Func<TEntity, TProperty>> property) : base(table, property.GetMemberInfo())

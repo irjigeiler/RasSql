@@ -8,7 +8,12 @@
         GreaterOrEqualThen,
         
         And,
-        Or
+        Or,
+        
+        Multiply,
+        Add,
+        Subtract,
+        Divide,
     }
 
     // public sealed class RawSqlOperator : IRawSqlItem, IEquatable<RawSqlOperator>
