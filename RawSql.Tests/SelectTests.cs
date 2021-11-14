@@ -53,6 +53,7 @@ namespace RawSql.Tests
 
             var orders = RawEx.Table<Order>();
             var orderItems = RawEx.Table<OrderItem>();
+            var secondOrderItems = RawEx.Table<OrderItem>();
 
             var productTotal = RawEx.Multiply(orderItems.Column(v => v.Price), orderItems.Column(v => v.Quantity));
             var select = new RawSqlSelect
@@ -60,13 +61,15 @@ namespace RawSql.Tests
                 Columns = new List<IRawSqlItem>
                 {
                     orders.Column(v => v.Country),
+                    orders.Column(v=>v.Id),
                     productTotal
                 },
                 From = orders,
                 Joins = new List<RawSqlJoin>
                 {
                     new(orderItems, RawEx.Equal(orders.Column(v => v.Id), orderItems.Column(v => v.OrderId)))
-                }
+                },
+                Limit = 10,
             };
 
             var main = new RawSqlSelect
@@ -74,9 +77,20 @@ namespace RawSql.Tests
                 Columns = new List<IRawSqlItem>
                 {
                     orders.Column(v => v.Country),
+                    secondOrderItems.Column(v=>v.Price),
                     productTotal
                 },
-                From = select
+                From = select,
+                Joins = new List<RawSqlJoin>
+                {
+                    new (secondOrderItems, RawEx.Equal(orders.Column(v => v.Id), secondOrderItems.Column(v => v.OrderId)))
+                },
+                OrderBy = new List<RawSqlOrderBy>
+                {
+                    new (productTotal)
+                },
+                Limit = 10,
+                Offset = 20,
             };
             
             var result = PostgresSqlQueryBuilder.Build(main, Context);

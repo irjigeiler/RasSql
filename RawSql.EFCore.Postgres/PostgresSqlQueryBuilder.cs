@@ -2,9 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Reflection;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 using RawSql.Core;
 
 namespace EFCore.RawSql.Postgres
@@ -17,9 +15,7 @@ namespace EFCore.RawSql.Postgres
             AliasManager = new RawSqlAliasManager(metadataProvider);
             Builder = new RawSqlStringBuilder();
             Hierarchies = selectHierarchies;
-            Context = new BuilderContext
-            {
-            };
+            Context = new BuilderContext();
         }
 
         public static string Build(IRawSqlItem item, DbContext context)
@@ -41,11 +37,6 @@ namespace EFCore.RawSql.Postgres
         {
             var name = MetadataProvider.TableName<TEntity>();
             Builder.AppendQuoted(name);
-            // if (Context.UseTableAliases)
-            // {
-            //     var alias = AliasManager.Alias(table);
-            //     Builder.Space().Append(alias);
-            // }
         }
 
         public void Visit<TEntity>(RawSqlColumn<TEntity> column)
@@ -96,8 +87,9 @@ namespace EFCore.RawSql.Postgres
                 )
                 .AppendLine()
                 .DecreaseIndent()
-                .Append("WHERE ");
-            update.Where.Visit(this);
+                .AppendIf(update.Where != null, "WHERE ");
+            
+            update.Where?.Visit(this);
         }
 
         public void Visit<TEntity>(RawSqlUpdateSet<TEntity> set)
@@ -169,6 +161,7 @@ namespace EFCore.RawSql.Postgres
             Builder.AppendIf(Context.CurrentAliasScope != null, "(");
             
             Context.BeginAliasScope(select);
+            
             Builder
                 .Append("SELECT ")
                 .IncreaseIndent()
@@ -183,63 +176,44 @@ namespace EFCore.RawSql.Postgres
                 .IncreaseIndent();
             
             select.From.Visit(this);
-            if (Context.UseTableAliases)
-            {
-                var fromAlias = AliasManager.Alias(select.From);
-                Builder.Space().Append(fromAlias);
-            }
-            
+            Builder.AppendIf(Context.UseTableAliases, $" {AliasManager.Alias(select.From)}");
             Builder.DecreaseIndent();
             Builder.AppendLine();
-            if (select.Joins?.Count > 0)
-            {
-                Builder
-                    .AppendMultiple(select.Joins,
-                        (builder, join) => Visit(join),
-                        builder => builder.AppendLine())
-                    .AppendLine();
-            }
+            
+            AppendIfAny(select.Joins, null, b => b.AppendLine());
+            AppendIfNotNull(select.Where, "WHERE");
+            AppendIfAny(select.GroupBy, "ORDER BY", b => b.Comma().Space());
+            AppendIfNotNull(select.Having, "HAVING");
+            AppendIfAny(select.OrderBy, "ORDER BY", builder => builder.Comma().Space());
 
-            if (select.Where != null)
-            {
-                Builder.Append("WHERE ");
-                select.Where.Visit(this);
-                Builder.AppendLine();
-            }
-
-            if (select.GroupBy?.Count > 0)
-            {
-                Builder
-                    .Append("GROUP BY ")
-                    .AppendMultiple(
-                        select.GroupBy,
-                        (builder, groupBy) => groupBy.Visit(this),
-                        builder => builder.Comma().Space()
-                    )
-                    .AppendLine();
-            }
-
-            if (select.Having != null)
-            {
-                Builder.Append("HAVING ");
-                select.Having.Visit(this);
-                Builder.AppendLine();
-            }
-
-            if (select.OrderBy?.Count > 0)
-            {
-                Builder
-                    .Append("ORDER BY ")
-                    .AppendMultiple(
-                        select.OrderBy,
-                        (builder, orderBy) => Visit(orderBy),
-                        builder => builder.Comma().Space()
-                    )
-                    .AppendLine();
-            }
-
+            Builder.AppendLineIf(select.Limit > 0, $"LIMIT {select.Limit}");
+            Builder.AppendLineIf(select.Offset > 0, $"OFFSET {select.Offset}");
             Context.EndAliasScope();
+            
             Builder.AppendIf(Context.CurrentAliasScope != null, ")");
+            
+            void AppendIfAny<TItem>(ICollection<TItem> items, string keyword, Action<RawSqlStringBuilder> separator) where TItem : IRawSqlItem
+            {
+                if (items?.Count > 0)
+                {
+                    Builder
+                        .AppendIf(keyword != null, $"{keyword} ")
+                        .AppendMultiple(items, (builder, v) => v.Visit(this), separator)
+                        .AppendLine();
+                }
+            }
+
+            void AppendIfNotNull<TItem>(TItem item, string keyword) where TItem : IRawSqlItem
+            {
+                if (item == null)
+                {
+                    return;
+                }
+                
+                Builder.Append(keyword).Space();
+                item.Visit(this);
+                Builder.AppendLine();
+            }
         }
         
         public void Visit(RawSqlJoin join)
@@ -287,7 +261,7 @@ namespace EFCore.RawSql.Postgres
             var parent = Hierarchies.GetParent(item, Context.CurrentAliasScope);
             if (parent == null || AliasManager.Alias(item, parent) != alias)
             {
-                builder.Append(" AS ").Append(alias);
+                builder.Space().Append(alias);
             }
         }
         
@@ -306,24 +280,15 @@ namespace EFCore.RawSql.Postgres
         
         private sealed class BuilderContext
         {
-            public BuilderContext()
-            {
-            }
-            
             private Stack<IRawSqlAliasScope> AliasScopes { get; } = new Stack<IRawSqlAliasScope>();
+            
             public bool UseTableAliases =>
                 CurrentAliasScope is RawSqlSelect select 
                 && (select.Joins?.Any() == true || !(select.From is IRawSqlTable));
 
-            public void BeginAliasScope(IRawSqlAliasScope select)
-            {
-                AliasScopes.Push(select);
-            }
+            public void BeginAliasScope(IRawSqlAliasScope select) => AliasScopes.Push(@select);
 
-            public void EndAliasScope()
-            {
-                AliasScopes.Pop();
-            }
+            public void EndAliasScope() => AliasScopes.Pop();
 
             public IRawSqlAliasScope CurrentAliasScope => AliasScopes.TryPeek(out var item) ? item : null;
         }

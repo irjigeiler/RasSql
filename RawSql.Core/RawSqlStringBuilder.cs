@@ -71,6 +71,9 @@ namespace RawSql.Core
             return this;
         }
         
+        public RawSqlStringBuilder AppendLineIf(bool test, string value) => !test ? this : AppendLine(value);
+
+        
         private void HandleNewLine()
         {
             if (NewLine)

@@ -4,6 +4,8 @@ namespace RawSql.Core
 {
     public class RawSqlSelect : IRawSqlItem, IRawSqlAliasScope
     {
+        public long? Limit { get; set; }
+        public long? Offset { get; set; }
         public IRawSqlItem From { get; set; }
         public IList<IRawSqlItem> Columns { get; set; }
         public IList<RawSqlJoin> Joins { get; set; }
